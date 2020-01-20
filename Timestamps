@@ -1,0 +1,158 @@
+#R Code#
+######Preamble - setting up variable names, timestamps, and careless responding intervals#####
+######Once the following information is entered manually, no further inputs should needed######
+
+#Loading Data
+Screen_Data <- read.csv("Bots_Screentimes.csv", head = T) #Screener data
+Survey_Data <- read.csv("Bots_Surv.csv", head = T) #Survey data
+#NOTE: Data must have missing values as blanks
+
+#Specifying date/time variables
+ScrD <- "Time" #name of variable for screener date/time completed
+SurS <- "StartTime" #name of variable for survey date/time started
+SurC <- "EndTime" #name of variable for survey date/time completed
+ScreenID <- "ScreenID" #Name of screener ID variable
+SurveyID <- "SurvID" #Name of the survey ID variable
+ScrFormats <- c("%m/%d/%Y %H:%M") #Screen date/time format(s) (can use multiple if separated by column)
+SurFormats <- c("%m/%d/%Y %H:%M") #Survey date/time format(s) (can use multiple if separated by column)
+Intervals <- c(1:100) #specify vector of time cutoffs 
+#to test for careless responding (in minutes) for Section 2
+#here it is set to test all response time cutoffs from 1 to 100 minutes
+
+######Section 1: Identifying possible matches across screening & survey documents#########
+
+###Creating list of possible matches between### 
+###screener and survey ID's using timestamps### 
+
+#Converting screener completion times
+Screen_Data$DTString <- sapply(Screen_Data[,c(ScrD)], toString)
+Screen_Data$DTScreen <- c(rep('NA', times = length(Screen_Data$DTString)))
+for (i in 1:length(Screen_Data$DTString)){
+if (Screen_Data$DTString[i]==""){
+next
+} else {
+Screen_Data$DTScreen[i] <- as.POSIXct(Screen_Data$DTString[i],
+  tryFormats = c(ScrFormats))
+}}
+
+#Converting survey start times
+Survey_Data$DTSString <- sapply(Survey_Data[,c(SurS)], toString)
+Survey_Data$DTStart <- c(rep('NA', times = length(Survey_Data$DTSString)))
+for (i in 1:length(Survey_Data$DTSString)){
+if (Survey_Data$DTSString[i]==""){
+next
+} else {
+Survey_Data$DTStart[i] <- as.POSIXct(Survey_Data$DTSString[i],
+  tryFormats = c(SurFormats))
+}}
+
+#Converting survey completion times (for next section)
+Survey_Data$DTEString <- sapply(Survey_Data[,c(SurC)], toString)
+Survey_Data$DTEnd <- c(rep('NA', times = length(Survey_Data$DTEString)))
+for (i in 1:length(Survey_Data$DTEString)){
+if (Survey_Data$DTEString[i]==""){
+next
+} else {
+Survey_Data$DTEnd[i] <- as.POSIXct(Survey_Data$DTEString[i],
+  tryFormats = c(SurFormats))
+}}
+
+#Matching screener with survey data based on time stamps
+Diffs <- as.data.frame(matrix(nrow = length(Survey_Data$DTStart),
+ncol = length(Screen_Data$DTScreen)))
+for (i in 1:length(Screen_Data$DTScreen)){
+if (is.na(as.numeric(Screen_Data$DTScreen[i]))==TRUE){
+next
+} else {
+for (j in 1:length(Survey_Data$DTStart)){
+ if (is.na(as.numeric(Survey_Data$DTStart[j]))==TRUE){
+ next
+} else {
+ D <- as.numeric(Survey_Data$DTStart[j]) - as.numeric(Screen_Data$DTScreen[i])
+ Diffs[j,i] <- D
+}}}}
+Diffs[Diffs < 0] <- NA
+Screen_Data$Matches <- c(rep('NA', times = length(Screen_Data$DTScreen)))
+for(i in 1:ncol(Diffs)){
+ if (all(is.na(Diffs[,i])) == TRUE){
+ next
+} else {
+  Screen_Data$Matches[i] <- which.min(Diffs[,i])
+ }}
+
+#Merging survey and screener ID's based on matches
+Index <- as.data.frame(cbind(Screen_Data[,c(ScreenID)],Screen_Data$Matches))
+names(Index) <- c("ScID","SurveyRow")
+Index$SurID <- c(rep('NA', times = nrow(Index)))
+for(i in 1:length(Index$SurveyRow)){
+ if (is.na(Index$SurveyRow[i])==TRUE){
+ next
+ } else {
+ Index$SurID[i] <- Survey_Data[Index$SurveyRow[i],SurveyID]
+ }}
+
+###Writing matched ID's to CSV###
+write.csv(Index[,c(1,3)], "MatchedIDs.csv")
+
+#################Section 2: Identifying Careless Responders#############
+
+###Now that we have an index of possible screen-survey matches,###
+###We can look for rapid or careless responders###
+
+#Computing response times and adding to Survey_Data
+Survey_Data$RTimes <- c(rep('NA', times = length(Survey_Data$DTStart)))
+for (i in 1:length(Survey_Data$DTStart)){
+if (is.na(as.numeric(Survey_Data$DTStart[i]))==TRUE){
+next
+} else {
+ Rtime <- as.numeric(Survey_Data$DTEnd[i]) - as.numeric(Survey_Data$DTStart[i])
+ Survey_Data$RTimes[i] <- Rtime
+}}
+
+#Identifying Careless responders
+Careless <- as.data.frame(matrix(nrow = length(Survey_Data$RTimes),
+ncol = length(Intervals)))
+for (i in Intervals){
+for (j in 1:length(Survey_Data$RTimes)){
+ if(is.na(Survey_Data$RTimes[j])==TRUE){
+ next
+ } else {
+ if(as.numeric(Survey_Data$RTimes[j]) < (i*60)){
+ Careless[j,i] <- 1
+ } else {
+ Careless[j,i] <- 0
+ }}}}
+
+#Saving Careless responders to Survey_Data
+Survey_Data$Suspect <- c(rep(NA, times = nrow(Careless)))
+for (i in 1:length(Survey_Data$Suspect)){
+ TimesID <- sum(as.numeric(Careless[i,]))
+ Survey_Data$Suspect[i] <- TimesID/length(Intervals)}
+
+#Saving suspicion values to index file
+Index$Suspicion <- c(rep('NA', times = nrow(Index)))
+for(i in 1:length(Index$SurveyRow)){
+ if (is.na(Index$SurveyRow[i])==TRUE){
+ next
+ } else {
+ Index$Suspicion[i] <- Survey_Data[Index$SurveyRow[i],c("Suspect")]
+ }}
+
+###Saving updated "MatchedIDs" file with suspecion levels for responses###
+write.csv(Index[,c(1,3,4)], "MatchedIDs&Suspicion.csv")
+
+###Also, saving ID's from survey file with suspicion levels###
+ID_Suspicion <- Survey_Data[,c(SurveyID,"Suspect")]
+names(ID_Suspicion) <- c("SurID","Suspicion")
+write.csv(ID_Suspicion,"SurveyIDs&Suspicion.csv")
+
+###Plotting number of careless suspects by cutoffs for careless responding
+###identified in the "Intervals" vector specified above
+Suspects <- c(rep(NA, times = ncol(Careless)))
+for (i in 1:length(Suspects)){
+ Suspects[i] <- sum(na.omit(Careless[,i])) }
+plot(x = Intervals, y = Suspects, type = "o",
+ xlab = "Carelessness Cutoff in Minutes", ylab = "Identified Suspects")
+###Plot should automatically display here###
+
+#########################################################################################
