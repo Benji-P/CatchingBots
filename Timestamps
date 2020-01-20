@@ -19,6 +19,8 @@ Intervals <- c(1:100) #specify vector of time cutoffs
 #to test for careless responding (in minutes) for Section 2
 #here it is set to test all response time cutoffs from 1 to 100 minutes
 
+###No further user information is needed from here.
+
 ######Section 1: Identifying possible matches across screening & survey documents#########
 
 ###Creating list of possible matches between### 
